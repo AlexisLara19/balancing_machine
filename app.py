@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import serial.tools.list_ports
 import numpy as np
-from PyQt6.QtCore import QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
-    QLabel, QMainWindow, QPushButton, QSpinBox, QWidget
+    QLabel, QMainWindow, QPushButton, QSpinBox, QWidget,
+    QFrame, QHBoxLayout, QVBoxLayout, QScrollArea
 )
 
 from protocol import SAMPLES_PER_PACKET, ADC_BITS, ADC_MAX, SampleBlock
@@ -13,6 +14,7 @@ from buffer import DualChannelRingBuffer
 from oscilloscope import Oscilloscope
 from workers import SerialReader, SimulatorReader, ProtocolWorker
 from analysis_worker import AnalysisWorker
+from theme import stylesheet
 
 
 class MainWindow(QMainWindow):
@@ -25,7 +27,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Vibration Scope — PSoC 4')
-        self.resize(1380, 860)
+        self.resize(1440, 900)
+        self.setMinimumSize(1080, 720)
+        self.setStyleSheet(stylesheet())
 
         self.buffer = DualChannelRingBuffer(capacity=200_000)
         self.source = None
@@ -67,15 +71,53 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self):
         central = QWidget()
+        central.setObjectName("workspace")
         self.setCentralWidget(central)
         root = QGridLayout(central)
         root.setColumnStretch(1, 1)
-        root.setRowStretch(0, 1)
+        root.setContentsMargins(24, 18, 24, 20)
+        root.setHorizontalSpacing(20)
+        root.setVerticalSpacing(16)
+        root.setRowStretch(1, 1)
+        header = QVBoxLayout()
+        title = QLabel('Balanceadora')
+        title.setObjectName('title')
+        subtitle = QLabel('ADQUISICIÓN Y ANÁLISIS DE VIBRACIÓN  /  PSoC 4')
+        subtitle.setObjectName('subtitle')
+        header.addWidget(title)
+        header.addWidget(subtitle)
+        root.addLayout(header, 0, 0, 1, 2)
+        self.metric_labels = {}
+        content = QVBoxLayout()
+        content.setSpacing(14)
+        root.addLayout(content, 1, 1)
+        highlights = QHBoxLayout()
+        highlights.setSpacing(12)
+        for key, title in [('rpm', 'VELOCIDAD · RPM'), ('one_x', 'AMPLITUD · 1X'), ('phase', 'FASE · 1X')]:
+            card = QFrame()
+            card.setObjectName('metricCard')
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(18, 14, 18, 14)
+            caption = QLabel(title)
+            caption.setObjectName('metricTitle')
+            value = QLabel('—')
+            value.setObjectName('metricValue')
+            self.metric_labels[key] = value
+            card_layout.addWidget(caption)
+            card_layout.addWidget(value)
+            highlights.addWidget(card, 1)
+        content.addLayout(highlights)
 
         left = QWidget()
+        left.setObjectName("controls")
         left_layout = QGridLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        root.addWidget(left, 0, 0)
+        sidebar = QScrollArea()
+        sidebar.setWidgetResizable(True)
+        sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar.setWidget(left)
+        sidebar.setFixedWidth(350)
+        root.addWidget(sidebar, 1, 0)
 
         connection_box = QGroupBox('Adquisición')
         connection = QFormLayout(connection_box)
@@ -86,6 +128,8 @@ class MainWindow(QMainWindow):
         self.connect_btn = QPushButton('Conectar')
         self.connect_btn.clicked.connect(self.toggle_connection)
         self.status_label = QLabel('● Desconectado')
+        self.status_label.setObjectName('status')
+        self.status_label.setWordWrap(True)
         self.throughput_label = QLabel('0 B/s')
         connection.addRow('Fuente:', self.port_combo)
         connection.addRow('Baudrate:', self.baud_combo)
@@ -147,31 +191,45 @@ class MainWindow(QMainWindow):
 
         analysis_box = QGroupBox('Análisis de balanceo')
         analysis = QFormLayout(analysis_box)
-        self.metric_labels = {}
         metrics = [
-            ('rpm', 'RPM'), ('rot_hz', '1X'), ('one_x', 'Amplitud 1X'),
-            ('phase', 'Fase'), ('rms', 'RMS AC'), ('p2p', 'Pico a pico'),
-            ('crest', 'Crest factor'), ('dominant', 'Frecuencia dominante'),
-            ('bpf', 'Blade Pass Frequency'), ('revs', 'Revoluciones analizadas'),
+            ('rot_hz', 'Frecuencia 1X'), ('rms', 'RMS AC'), ('p2p', 'Pico a pico'),
+            ('crest', 'Factor de cresta'), ('dominant', 'Frecuencia dominante'),
+            ('bpf', 'Paso de álabes (BPF)'), ('revs', 'Revoluciones analizadas'),
         ]
         for key, title in metrics:
             label = QLabel('—')
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.metric_labels[key] = label
             analysis.addRow(title + ':', label)
-        left_layout.addWidget(analysis_box, 3, 0)
+
 
         diagnostics_box = QGroupBox('Protocolo')
         diagnostics = QFormLayout(diagnostics_box)
         self.protocol_label = QLabel('Paquetes 0 | CRC 0 | Bloques 0')
         self.protocol_label.setWordWrap(True)
         diagnostics.addRow(self.protocol_label)
-        left_layout.addWidget(diagnostics_box, 4, 0)
+        left_layout.addWidget(diagnostics_box, 3, 0)
+        left_layout.setRowStretch(4, 1)
 
         self.scope = Oscilloscope()
         self.scope.set_time_per_div(self.time_div_values[self.time_div_combo.currentIndex()])
         self.scope.set_volts_per_div(self.volt_div_values[self.volt_div_combo.currentIndex()])
         self.scope.set_vertical_center(self.vref / 2.0)
-        root.addWidget(self.scope, 0, 1)
+        plot_box = QGroupBox('Señales en tiempo real')
+        plot_layout = QVBoxLayout(plot_box)
+        plot_layout.addWidget(self.scope)
+        content.addWidget(plot_box, 1)
+        content.addWidget(analysis_box)
+        for form in (connection, acquisition, scope_form, analysis):
+            form.setVerticalSpacing(10)
+            form.setHorizontalSpacing(12)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
+    def _set_status(self, text, state='idle'):
+        self.status_label.setText(text)
+        self.status_label.setProperty('state', state)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def refresh_ports(self):
         if self.source and self.source.isRunning():
@@ -226,17 +284,17 @@ class MainWindow(QMainWindow):
             self.source.wait(1500)
             self.source = None
         self.connect_btn.setText('Conectar')
-        self.status_label.setText('● Desconectado')
+        self._set_status('● Desconectado')
 
     def on_connected(self):
-        self.status_label.setText('● Conectado')
+        self._set_status('● Conectado', 'connected')
 
     def on_disconnected(self):
-        self.status_label.setText('● Desconectado')
+        self._set_status('● Desconectado')
         self.connect_btn.setText('Conectar')
 
     def on_source_error(self, text):
-        self.status_label.setText(f'● Error: {text}')
+        self._set_status(f'● Error: {text}', 'error')
 
     def on_sample_block(self, block: SampleBlock):
         self.buffer.append(block.vibration, block.trigger)
@@ -313,7 +371,7 @@ class MainWindow(QMainWindow):
 
     def on_analysis_error(self, text):
         self.analysis_busy = False
-        self.status_label.setText(f'● Error análisis: {text}')
+        self._set_status(f'● Error análisis: {text}', 'error')
 
     def on_vref_changed(self, value):
         self.vref = float(value)

@@ -126,3 +126,21 @@ python test_core.py
 4. Convertir el canal de vibración desde volts a la unidad física del sensor, por ejemplo mm/s.
 5. Validar fase y polaridad con una referencia física conocida.
 6. Añadir FFT/espectro y análisis por órdenes en una vista secundaria.
+
+## Apariencia de la interfaz
+
+La primera revisión visual conserva los controles y el flujo de adquisición existentes.
+
+- Paleta centralizada en `theme.py`: azul #004aad, fondo #e9ebed, paneles blancos y texto secundario #555f88.
+- Tarjetas destacadas para RPM, amplitud 1X y fase; métricas complementarias bajo el osciloscopio.
+- Vibración azul y trigger violeta (#8056ad), identificados también por su leyenda.
+- Bordes suaves de 6–10 px; separación mediante bordes discretos, sin sombras sobre la gráfica.
+- Panel de configuración desplazable y ventana mínima de 1080 × 720.
+- Estilo Qt Fusion para una apariencia consistente entre plataformas.
+
+Ejecutar con `python main.py`. Para ajustar colores, editar `COLORS` en `theme.py`.
+Las capturas de `previews/` muestran datos del simulador, no mediciones físicas.
+
+Validación: simulador a 1800 RPM, actualización de curvas y métricas, desconexión y cierre;
+revisión visual a 1440 × 900 y 1080 × 720; prueba existente `python test_core.py`.
+No se ha validado esta revisión con hardware conectado ni en Windows.

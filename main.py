@@ -5,6 +5,7 @@ from app import MainWindow
 
 def main():
     app = QApplication(sys.argv)
+    app.setStyle('Fusion')
     app.setApplicationName('Vibration Scope')
     window = MainWindow()
     window.show()
