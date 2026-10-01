@@ -21,6 +21,7 @@ def stylesheet():
                color: {c['text']}; }}
     QMainWindow, QWidget#workspace {{ background: {c['background']}; }}
     QLabel {{ background: transparent; }}
+    QWidget#balancingPanel, QWidget#balancePage {{ background: {c["surface"]}; }}
     QLabel#title {{ font-size: 25px; font-weight: 700; color: {c['primary']}; }}
     QLabel#subtitle, QLabel#metricTitle {{ color: {c['muted']}; }}
     QLabel#metricValue {{ font-size: 27px; font-weight: 700; color: {c['primary']}; }}
@@ -31,7 +32,7 @@ def stylesheet():
                  font-weight: 600; color: {c['heading']}; }}
     QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left;
                         left: 14px; padding: 0 6px; }}
-    QComboBox, QSpinBox, QDoubleSpinBox {{ background: {c['soft']};
+    QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{ background: {c['soft']};
         border: 1px solid {c['border']}; border-radius: 5px; padding: 5px 8px;
         min-height: 22px; selection-background-color: {c['primary']}; }}
     QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {c['primary']}; }}
@@ -39,6 +40,7 @@ def stylesheet():
                                  selection-color: white; }}
     QPushButton {{ background: {c['primary']}; color: white; border: 1px solid {c['primary']};
                    border-radius: 6px; padding: 9px 16px; font-weight: 600; }}
+    QPushButton:disabled {{ background: {c["border"]}; color: {c["muted"]}; border-color: {c["border"]}; }}
     QPushButton:hover {{ background: {c['secondary']}; }}
     QPushButton:pressed {{ background: {c['heading']}; }}
     QPushButton:focus {{ border: 2px solid {c['muted']}; }}
@@ -46,6 +48,11 @@ def stylesheet():
                      border-radius: 5px; padding: 6px; }}
     QLabel#status[state="connected"] {{ color: #176546; background: #e9f5ee; }}
     QLabel#status[state="error"] {{ color: #a12636; background: #fff0f0; }}
+    QTabWidget::pane {{ border: none; background: {c['surface']}; }}
+    QTabBar::tab {{ background: {c['soft']}; color: {c['muted']}; padding: 9px 18px;
+                   border-radius: 5px; margin-right: 6px; }}
+    QTabBar::tab:selected {{ background: {c['lavender']}; color: {c['primary']}; font-weight: 600; }}
+    QTabBar::tab:hover {{ background: {c['background']}; }}
     QScrollArea {{ border: none; background: transparent; }}
     QWidget#controls {{ background: transparent; }}
     QScrollBar:vertical {{ background: {c['background']}; width: 10px; }}

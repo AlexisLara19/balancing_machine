@@ -56,6 +56,7 @@ def analyze_block(vibration: np.ndarray, trigger: np.ndarray, sample_rate: float
     rot_hz = 0.0
     one_x_amp = 0.0
     phase_deg = 0.0
+    phase_valid = False
     revolutions = max(0, crossings.size - 1)
 
     if crossings.size >= 2:
@@ -88,6 +89,7 @@ def analyze_block(vibration: np.ndarray, trigger: np.ndarray, sample_rate: float
             one_x_amp = float(np.hypot(a, b))
             # Convención: y ≈ A*cos(theta - phase). Trigger ascendente = 0°.
             phase_deg = float(np.degrees(np.arctan2(b, a)) % 360.0)
+            phase_valid = bool(one_x_amp > 0 and np.isfinite(one_x_amp) and np.isfinite(phase_deg))
 
     return {
         'rms_counts': rms_counts,
@@ -99,6 +101,7 @@ def analyze_block(vibration: np.ndarray, trigger: np.ndarray, sample_rate: float
         'rot_hz': rot_hz,
         'one_x_amp_counts': one_x_amp,
         'phase_deg': phase_deg,
+        'phase_valid': phase_valid,
         'bpf_hz': rot_hz * max(1, int(blades)),
         'revolutions': int(revolutions),
         'trigger_crossings': int(crossings.size),

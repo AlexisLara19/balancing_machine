@@ -144,3 +144,115 @@ Las capturas de `previews/` muestran datos del simulador, no mediciones físicas
 Validación: simulador a 1800 RPM, actualización de curvas y métricas, desconexión y cierre;
 revisión visual a 1440 × 900 y 1080 × 720; prueba existente `python test_core.py`.
 No se ha validado esta revisión con hardware conectado ni en Windows.
+
+## Vista Polar 1X
+
+En el área gráfica, las pestañas **Señal temporal** y **Polar 1X** seleccionan la
+visualización activa. En la polar, el radio representa la amplitud 1X en volts y
+el ángulo la fase respecto al cruce ascendente del trigger. Se utiliza 0° a la
+derecha y sentido antihorario. No es una indicación de masa de corrección.
+
+La escala radial es fija y ajustable (1 V por defecto); si la amplitud excede el
+máximo se muestra un aviso. El vector se oculta cuando el análisis no dispone
+de una revolución utilizable o de amplitud 1X finita y positiva. Esta comprobación
+no certifica la calidad del trigger ni establece un umbral contra ruido.
+
+La adquisición y el análisis continúan al cambiar de pestaña. La vista temporal
+se actualiza cada 33 ms; su temporizador se detiene en la pestaña polar, evitando
+la extracción y conversión de muestras destinadas al dibujo. La polar se
+actualiza con los resultados del análisis (hasta aproximadamente 10 Hz).
+La cuadrícula se reconstruye únicamente al cambiar la escala radial.
+
+Cambios: `app.py`, `theme.py`, `analysis_core.py` y nuevo `polar_plot.py`.
+`phase_valid` se añade al resultado del análisis sin cambiar el cálculo de 1X.
+Validado con simulador, retorno entre pestañas, ausencia de actualización del
+osciloscopio oculto, fase inválida, amplitud fuera de escala y pruebas del núcleo.
+No se ha medido CPU/memoria ni validado con hardware o Windows.
+
+## Calibración y prueba de balanceo en un plano
+
+La pestaña **Balanceo · 1 plano** ofrece los modos **Calibración** y **Prueba de
+balanceo**. Los controles de adquisición siguen disponibles. Al entrar a esta
+pestaña se detiene el dibujo del osciloscopio; la adquisición y el análisis siguen
+activos. Los resultados de trabajo se capturan mediante botones; no se modifica
+continuamente una recomendación que ya fue capturada.
+
+### Calibración
+
+1. Conectar la fuente y configurar ADC full-scale y umbral del trigger.
+2. Seleccionar Calibración, definir perfil/montaje, marca física de 0°, sentido de
+   los ángulos, respuesta angular y RPM nominales.
+3. Capturar el rotor **sin masa de prueba**.
+4. Detener el rotor, colocar una masa conocida a un radio y ángulo conocidos,
+   introducir esos valores y capturar **con masa de prueba** a las mismas RPM.
+5. Calcular y guardar un archivo `.json`. El archivo conserva coeficiente complejo,
+   configuración, convención angular, masa de prueba y fecha. Puede cargarse en
+   otra sesión mediante **Cargar calibración**.
+6. Retirar la masa de prueba antes de utilizar el modo de prueba.
+
+La relación angular requiere validación física. En **Fase aumenta con el ángulo**,
+la fase del cambio de vibración aumenta al mover la masa en el sentido positivo
+seleccionado; la otra opción representa el signo inverso. Una única masa en una
+única posición no identifica este signo. Puede comprobarse comparando el cambio
+vectorial respecto al rotor inicial al colocar la misma masa en dos posiciones
+conocidas. La polar de medición conserva su convención de pantalla; los ángulos
+físicos de corrección utilizan la convención guardada en la calibración.
+
+`alpha = (V_con_masa - V_inicial) / (m_prueba * r_prueba * exp(j * signo * angulo))`.
+La unidad de alpha es V/(g·mm). Su cálculo rechaza una respuesta menor o igual a
+5 veces la dispersión combinada, al 5% de la mayor amplitud capturada o a 1 µV,
+según el mayor de esos límites. Los parámetros de estabilidad son provisionales;
+deben ajustarse después de caracterizar la repetibilidad del equipo real.
+
+### Prueba de balanceo
+
+1. Cargar una calibración compatible y confirmar físicamente el perfil, montaje,
+   referencia angular y velocidad indicados. El programa no detecta la identidad
+   del rotor, cambios mecánicos ni cambios de ganancia externos.
+2. Definir el radio de corrección en el mismo plano y, si existe, el límite
+   permitido de desbalance residual en g·mm. Un límite de cero significa que no
+   se ha definido un criterio de aceptación.
+3. Pulsar **Medir rotor y calcular corrección**. Se indica masa a **agregar**, ángulo,
+   sentido y radio. Las posiciones de colocación son continuas; esta versión no
+   reparte masas entre álabes u orificios.
+4. Detener el rotor, colocar la masa y volver a girar. Pulsar **Verificar** para
+   medir el desbalance residual estimado, reducción de amplitud y corrección
+   adicional estimada. Mantener las correcciones ya instaladas.
+5. Pulsar **Nueva pieza** para limpiar los resultados de la pieza anterior.
+
+`U_c = -V / alpha`; `m_c = abs(U_c) / r_c`; el ángulo físico se obtiene aplicando
+el signo guardado al argumento de U_c. El radio de corrección puede cambiar en
+el mismo plano, porque alpha se expresa por unidad de desbalance (g·mm).
+
+### Capturas, compatibilidad y límites de esta versión
+
+- Cada captura toma tres ventanas nuevas de 2 s sin solapamiento (~6 s o más).
+  Se promedian vectores complejos, no ángulos directamente.
+- Se requieren fase válida y al menos tres revoluciones por ventana. Se verifica
+  RPM nominal y variación vectorial (valores iniciales: 2% y 10%).
+- La captura se cancela ante desconexión, ausencia de datos recientes, errores
+  CRC/ADC/pérdida de secuencia, cambio de configuración o tiempo máximo de 30 s.
+- No se pueden utilizar calibraciones de simulador con una fuente serie y viceversa.
+  ADC full-scale, frecuencia de muestreo y umbral deben coincidir con el archivo.
+- El simulador original produce una señal fija: no modela una masa de prueba ni
+  masas de corrección. Dos capturas iguales deben rechazar la calibración. Las
+  pruebas automáticas utilizan vectores sintéticos con respuesta conocida para
+  verificar el cálculo y la persistencia.
+- La aceptación utiliza el límite de g·mm introducido. No se aplica un grado ISO
+  automáticamente ni se calibra la velocidad de vibración en mm/s.
+- Se asume respuesta lineal de un solo plano. La validación física de referencia,
+  signo angular, sensibilidad y respuesta residual está pendiente.
+
+Comprobaciones:
+
+```bash
+python test_core.py
+python test_calibration.py
+# Linux sin pantalla:
+QT_QPA_PLATFORM=offscreen python test_workflow.py
+# En Windows, también puede ejecutarse con una ventana visible:
+python test_workflow.py
+```
+
+Las capturas `previews/calibration-*.png` y `previews/balancing-*.png` ilustran el
+flujo con datos sintéticos de demostración. No son una calibración física válida.

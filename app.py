@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import time
 import serial.tools.list_ports
 import numpy as np
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
     QLabel, QMainWindow, QPushButton, QSpinBox, QWidget,
-    QFrame, QHBoxLayout, QVBoxLayout, QScrollArea
+    QFrame, QHBoxLayout, QVBoxLayout, QScrollArea, QTabWidget
 )
 
 from protocol import SAMPLES_PER_PACKET, ADC_BITS, ADC_MAX, SampleBlock
 from buffer import DualChannelRingBuffer
 from oscilloscope import Oscilloscope
+from polar_plot import PolarPlot
+from balancing_panel import BalancingPanel
 from workers import SerialReader, SimulatorReader, ProtocolWorker
 from analysis_worker import AnalysisWorker
 from theme import stylesheet
@@ -34,10 +37,21 @@ class MainWindow(QMainWindow):
         self.buffer = DualChannelRingBuffer(capacity=200_000)
         self.source = None
         self.analysis_busy = False
+        self.latest_analysis = None
+        self.total_samples = 0
+        self.last_block_time = 0.0
+        self.stream_epoch = 0
+        self.analysis_stamp = None
+        self.protocol_counts = {}
         self.vref = 3.3  # Antes lo teniamos en 5V, pero VDDA es en realidad 3.3V
 
         self._build_workers()
         self._build_ui()
+        self.trigger_threshold.valueChanged.connect(lambda _: self.balancing.context_changed())
+        self.port_combo.currentTextChanged.connect(lambda _: self.balancing.context_changed())
+        self.capture_timer = QTimer(self)
+        self.capture_timer.timeout.connect(self.balancing.check_freshness)
+        self.capture_timer.start(250)
 
         self.render_timer = QTimer(self)
         self.render_timer.timeout.connect(self.refresh_plot)
@@ -190,17 +204,23 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(scope_box, 2, 0)
 
         analysis_box = QGroupBox('Análisis de balanceo')
-        analysis = QFormLayout(analysis_box)
+        self.analysis_box = analysis_box
+        analysis = QGridLayout(analysis_box)
+        analysis.setHorizontalSpacing(22)
+        analysis.setColumnStretch(1, 1)
+        analysis.setColumnStretch(3, 1)
         metrics = [
             ('rot_hz', 'Frecuencia 1X'), ('rms', 'RMS AC'), ('p2p', 'Pico a pico'),
             ('crest', 'Factor de cresta'), ('dominant', 'Frecuencia dominante'),
             ('bpf', 'Paso de álabes (BPF)'), ('revs', 'Revoluciones analizadas'),
         ]
-        for key, title in metrics:
+        for i, (key, title) in enumerate(metrics):
             label = QLabel('—')
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.metric_labels[key] = label
-            analysis.addRow(title + ':', label)
+            row, pair = divmod(i, 2)
+            analysis.addWidget(QLabel(title + ':'), row, pair * 2)
+            analysis.addWidget(label, row, pair * 2 + 1)
 
 
         diagnostics_box = QGroupBox('Protocolo')
@@ -215,12 +235,22 @@ class MainWindow(QMainWindow):
         self.scope.set_time_per_div(self.time_div_values[self.time_div_combo.currentIndex()])
         self.scope.set_volts_per_div(self.volt_div_values[self.volt_div_combo.currentIndex()])
         self.scope.set_vertical_center(self.vref / 2.0)
-        plot_box = QGroupBox('Señales en tiempo real')
+        plot_box = QGroupBox('Medición y balanceo')
         plot_layout = QVBoxLayout(plot_box)
-        plot_layout.addWidget(self.scope)
+        self.plot_tabs = QTabWidget()
+        self.plot_tabs.addTab(self.scope, 'Señal temporal')
+        self.polar = PolarPlot()
+        self.plot_tabs.addTab(self.polar, 'Polar 1X')
+        self.balancing = BalancingPanel(self)
+        balance_scroll = QScrollArea()
+        balance_scroll.setWidgetResizable(True)
+        balance_scroll.setWidget(self.balancing)
+        self.plot_tabs.addTab(balance_scroll, 'Balanceo · 1 plano')
+        plot_layout.addWidget(self.plot_tabs)
+        self.plot_tabs.currentChanged.connect(self.on_plot_tab_changed)
         content.addWidget(plot_box, 1)
         content.addWidget(analysis_box)
-        for form in (connection, acquisition, scope_form, analysis):
+        for form in (connection, acquisition, scope_form):
             form.setVerticalSpacing(10)
             form.setHorizontalSpacing(12)
             form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -256,6 +286,12 @@ class MainWindow(QMainWindow):
             self.status_label.setText('● Sin fuente')
             return
 
+        self.balancing.cancel_capture('Fuente reiniciada; repite la captura.')
+        self.stream_epoch += 1
+        self.total_samples = 0
+        self.last_block_time = 0.0
+        self.latest_analysis = None
+        self.refresh_polar()
         self.buffer.clear()
         self.protocol_reset.emit()
 
@@ -279,6 +315,7 @@ class MainWindow(QMainWindow):
         self.connect_btn.setText('Desconectar')
 
     def stop_source(self):
+        self.balancing.cancel_capture("Fuente desconectada; repite la captura.")
         if self.source:
             self.source.stop()
             self.source.wait(1500)
@@ -290,6 +327,7 @@ class MainWindow(QMainWindow):
         self._set_status('● Conectado', 'connected')
 
     def on_disconnected(self):
+        self.balancing.cancel_capture("Fuente desconectada; repite la captura.")
         self._set_status('● Desconectado')
         self.connect_btn.setText('Conectar')
 
@@ -298,8 +336,14 @@ class MainWindow(QMainWindow):
 
     def on_sample_block(self, block: SampleBlock):
         self.buffer.append(block.vibration, block.trigger)
+        self.total_samples += min(block.vibration.size, block.trigger.size)
+        self.last_block_time = time.monotonic()
 
     def on_protocol_diagnostics(self, d: dict):
+        if any(d.get(k, 0) > self.protocol_counts.get(k, 0) for k in ('bad_crc', 'bad_adc', 'dropped_sequences')):
+            self.balancing.cancel_capture('Error de protocolo o pérdida de secuencia; repite la captura.')
+            self.buffer.clear()
+        self.protocol_counts = d.copy()
         self.protocol_label.setText(
             f"Paquetes OK {d.get('good_packets', 0)} | CRC {d.get('bad_crc', 0)} | "
             f"ADC {d.get('bad_adc', 0)} | Bloques {d.get('blocks', 0)} | "
@@ -309,38 +353,40 @@ class MainWindow(QMainWindow):
     def counts_to_volts(self, data: np.ndarray) -> np.ndarray:
         return data.astype(np.float32) * (self.vref / ADC_MAX)
 
+    def on_plot_tab_changed(self, index):
+        self.analysis_box.setVisible(index != 2)
+        if index == 0:
+            self.render_timer.start(33)
+            self.refresh_plot()
+        else:
+            self.render_timer.stop()
+            self.refresh_polar()
+
+    def refresh_polar(self):
+        if self.plot_tabs.currentIndex() != 1:
+            return
+        r = self.latest_analysis
+        valid = bool(r and r.get('phase_valid', False))
+        measurement = (r['one_x_amp_counts'] * self.vref / ADC_MAX, r['phase_deg']) if valid else None
+        self.polar.update_measurement(measurement)
+
     def refresh_plot(self):
+        if self.plot_tabs.currentIndex() != 0:
+            return
         visible_samples = max(2, int(np.ceil(self.scope.visible_seconds() * self.SAMPLE_RATE)))
         vibration, trigger = self.buffer.latest(visible_samples)
         if vibration.size == 0:
             return
-
-        # print(
-        #     "ADC CH0:",
-        #     int(vibration[-1]),
-        #     "Voltaje:",
-        #     float(self.counts_to_volts(vibration[-1:])[0])
-        # )
-
-        raw = vibration[-1:]
-
-        volts = self.counts_to_volts(raw)
-
-        # print(
-        #     f"CH0: ADC={int(vibration[-1])}, "
-        #     f"V={float(self.counts_to_volts(vibration[-1:])[0]):.4f} | "
-        #     f"CH1: ADC={int(trigger[-1])}, "
-        #     f"V={float(self.counts_to_volts(trigger[-1:])[0]):.4f}"
-        # )
-
         self.scope.update_data(
-            self.counts_to_volts(vibration),
-            self.counts_to_volts(trigger),
-            self.SAMPLE_RATE,
+            self.counts_to_volts(vibration), self.counts_to_volts(trigger), self.SAMPLE_RATE,
         )
 
     def request_analysis(self):
-        if self.analysis_busy:
+        if self.analysis_busy or not self.source or not self.source.isRunning():
+            return
+        if time.monotonic() - self.last_block_time > 1:
+            return
+        if self.analysis_stamp and self.analysis_stamp[:2] == (self.stream_epoch, self.total_samples):
             return
         # Hasta 2 segundos de señal para mejorar estabilidad de RPM/fase.
         n = int(self.SAMPLE_RATE * 2.0)
@@ -348,6 +394,7 @@ class MainWindow(QMainWindow):
         if vibration.size < SAMPLES_PER_PACKET:
             return
         self.analysis_busy = True
+        self.analysis_stamp = (self.stream_epoch, self.total_samples, self.balancing.live_context(), vibration.size)
         self.analysis_request.emit(
             vibration, trigger, self.SAMPLE_RATE,
             float(self.trigger_threshold.value()), self.blades_spin.value()
@@ -355,13 +402,23 @@ class MainWindow(QMainWindow):
 
     def on_analysis_result(self, r: dict):
         self.analysis_busy = False
+        stamp = self.analysis_stamp
+        if not stamp or stamp[0] != self.stream_epoch or stamp[2] != self.balancing.live_context():
+            return
+        if not self.source or not self.source.isRunning() or time.monotonic() - self.last_block_time > 1:
+            return
+        if stamp[3] >= self.balancing.WINDOW_SAMPLES:
+            self.balancing.consume(r, stamp[1], stamp[0], stamp[2])
+        self.latest_analysis = r or None
+        self.refresh_polar()
         if not r:
+            self.metric_labels["phase"].setText("—")
             return
         scale = self.vref / ADC_MAX
         self.metric_labels['rpm'].setText(f"{r['rpm']:.1f} RPM")
         self.metric_labels['rot_hz'].setText(f"{r['rot_hz']:.3f} Hz")
         self.metric_labels['one_x'].setText(f"{r['one_x_amp_counts'] * scale:.4f} V")
-        self.metric_labels['phase'].setText(f"{r['phase_deg']:.1f}°")
+        self.metric_labels['phase'].setText(f"{r['phase_deg']:.1f}°" if r.get("phase_valid", False) else "—")
         self.metric_labels['rms'].setText(f"{r['rms_counts'] * scale:.4f} V")
         self.metric_labels['p2p'].setText(f"{r['p2p_counts'] * scale:.4f} V")
         self.metric_labels['crest'].setText(f"{r['crest_factor']:.3f}")
@@ -371,11 +428,17 @@ class MainWindow(QMainWindow):
 
     def on_analysis_error(self, text):
         self.analysis_busy = False
+        self.latest_analysis = None
+        self.refresh_polar()
+        self.metric_labels['phase'].setText('—')
+        self.balancing.cancel_capture('Error de análisis; repite la captura.')
         self._set_status(f'● Error análisis: {text}', 'error')
 
     def on_vref_changed(self, value):
         self.vref = float(value)
+        self.balancing.context_changed()
         self.scope.set_vertical_center(self.vref / 2.0)
+        self.refresh_polar()
 
     def change_time_div(self, index):
         self.scope.set_time_per_div(self.time_div_values[index])
@@ -386,6 +449,11 @@ class MainWindow(QMainWindow):
     def set_simulator_rpm(self, rpm):
         if isinstance(self.source, SimulatorReader):
             self.source.rpm = float(rpm)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "balancing"):
+            self.balancing.set_compact(self.width() < 1300)
 
     def closeEvent(self, event):
         self.stop_source()
