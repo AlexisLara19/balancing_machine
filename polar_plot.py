@@ -9,6 +9,7 @@ from theme import COLORS
 class PolarPlot(QWidget):
     def __init__(self):
         super().__init__()
+        self.setObjectName("polarPanel")
         self._measurement = None
         layout = QVBoxLayout(self)
         controls = QHBoxLayout()
@@ -23,6 +24,7 @@ class PolarPlot(QWidget):
         controls.addStretch()
         layout.addLayout(controls)
         self.plot = pg.PlotWidget(background=COLORS['surface'])
+        self.plot.setMinimumHeight(180)
         self.plot.setAspectLocked(True)
         self.plot.hideAxis('bottom')
         self.plot.hideAxis('left')

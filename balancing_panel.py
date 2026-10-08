@@ -3,9 +3,9 @@ import json
 import time
 from pathlib import Path
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
-    QLabel, QPushButton, QDoubleSpinBox, QComboBox, QLineEdit, QGroupBox, QStackedWidget,
+    QLabel, QPushButton, QDoubleSpinBox, QComboBox, QLineEdit, QGroupBox,
     QFileDialog, QBoxLayout)
-from calibration_core import Calibration, summarize, calibrate, correction
+from calibration_core import Calibration, summarize, calibrate, correction, distribute_on_blades
 from protocol import ADC_MAX
 
 
@@ -24,10 +24,7 @@ class BalancingPanel(QWidget):
         self._loading = False
         root = QVBoxLayout(self)
         top = QHBoxLayout()
-        top.addWidget(QLabel('Modo de operación:'))
-        self.mode = QComboBox()
-        self.mode.addItems(['Prueba de balanceo', 'Calibración'])
-        top.addWidget(self.mode)
+        top.addWidget(QLabel('Calibración · un plano'))
         self.load_btn = QPushButton('Cargar calibración')
         self.load_btn.clicked.connect(self.load_calibration)
         top.addWidget(self.load_btn)
@@ -35,20 +32,34 @@ class BalancingPanel(QWidget):
         self.summary = QLabel('Sin calibración. Carga un archivo o crea una calibración.')
         self.summary.setWordWrap(True)
         root.addWidget(self.summary)
-        self.pages = QStackedWidget()
-        root.addWidget(self.pages)
-        self.pages.addWidget(self._test_page())
-        self.pages.addWidget(self._calibration_page())
-        self.mode.currentIndexChanged.connect(self._change_mode)
-        self.message = QLabel('Selecciona una calibración y conecta la fuente para medir.')
+        root.addWidget(self._calibration_page())
+        self.message = QLabel('Completa la configuración y captura sin/con masa de prueba.')
         self.message.setWordWrap(True)
         self.message.setObjectName('status')
         root.addWidget(self.message)
-        self.cancel_btn = QPushButton('Cancelar captura')
-        self.cancel_btn.setEnabled(False)
-        self.cancel_btn.clicked.connect(lambda: self.cancel_capture('Captura cancelada.'))
+        self.cancel_btn = self.button('Cancelar captura', lambda: self.cancel_capture('Captura cancelada.'))
         root.addWidget(self.cancel_btn)
         root.addStretch()
+
+        self.test_widget = QWidget()
+        self.test_widget.setObjectName('balancePage')
+        test_layout = QVBoxLayout(self.test_widget)
+        test_header = QHBoxLayout()
+        test_header.addWidget(QLabel('Prueba de balanceo · un plano'))
+        self.test_load_btn = self.button('Cargar calibración', self.load_calibration)
+        test_header.addWidget(self.test_load_btn)
+        test_layout.addLayout(test_header)
+        self.test_summary = QLabel(self.summary.text())
+        self.test_summary.setWordWrap(True)
+        test_layout.addWidget(self.test_summary)
+        test_layout.addWidget(self._test_page())
+        self.test_message = QLabel('Selecciona una calibración y conecta la fuente para medir.')
+        self.test_message.setWordWrap(True)
+        self.test_message.setObjectName('status')
+        test_layout.addWidget(self.test_message)
+        self.test_cancel_btn = self.button('Cancelar captura', lambda: self.cancel_capture('Captura cancelada.'))
+        test_layout.addWidget(self.test_cancel_btn)
+        test_layout.addStretch()
         self.settings_widgets = [self.profile, self.reference, self.direction, self.phase_sign,
                                  self.rpm, self.tolerance, self.stability, self.mass, self.radius, self.angle]
         for widget in self.settings_widgets:
@@ -60,6 +71,8 @@ class BalancingPanel(QWidget):
                 widget.valueChanged.connect(self._settings_changed)
         self.correction_radius.valueChanged.connect(self._show_test)
         self.limit.valueChanged.connect(self._show_test)
+        self.blade_one.valueChanged.connect(self._show_test)
+        self.window.blades_spin.valueChanged.connect(self._show_test)
         self._buttons()
         self.set_compact(window.width() < 1300)
 
@@ -121,25 +134,33 @@ class BalancingPanel(QWidget):
         self.correction_radius=self.spin(.1, 10000, 100, ' mm')
         self.limit=self.spin(0, 1000000, 0, ' g·mm')
         self.limit.setSpecialValueText('Sin límite definido')
+        self.blade_one = self.spin(0, 359.99, 0, '°')
+        self.blade_count_label = QLabel(str(self.window.blades_spin.value()))
         form.addRow('Radio de corrección:',self.correction_radius)
+        form.addRow('N.º álabes (configuración):', self.blade_count_label)
+        form.addRow('Ángulo del álabe 1:', self.blade_one)
         form.addRow('Desbalance residual máximo:',self.limit)
         layout.addWidget(box)
         self.test_btn=self.button('1. Medir rotor y calcular corrección',lambda:self.begin_capture('test'))
         layout.addWidget(self.test_btn)
         self.result_label=QLabel('Corrección: —');self.result_label.setWordWrap(True)
         layout.addWidget(self.result_label)
+        self.placement_label = QLabel("Colocación por álabes: —")
+        self.placement_label.setWordWrap(True)
+        layout.addWidget(self.placement_label)
         self.residual_btn=self.button('2. Verificar después de colocar la masa',lambda:self.begin_capture('residual'))
         layout.addWidget(self.residual_btn)
         self.residual_label=QLabel('Residual: —');self.residual_label.setWordWrap(True)
         layout.addWidget(self.residual_label)
         self.new_btn=self.button('Nueva pieza',self.new_piece);layout.addWidget(self.new_btn)
-        note=QLabel('Usa el perfil, montaje, marca de 0° y sentido angular guardados. La masa de prueba debe estar retirada. Mantén las masas de corrección instaladas durante la verificación.')
+        note=QLabel('Numera los álabes equidistantes desde el 1 en el sentido indicado. Coloca las masas al mismo radio. Usa el perfil, montaje, marca de 0° y sentido angular guardados. La masa de prueba debe estar retirada. Mantén las masas de corrección instaladas durante la verificación.')
         note.setWordWrap(True);layout.addWidget(note)
         layout.addStretch()
         return page
 
-    def _change_mode(self,index):
-        self.cancel_capture('Modo seleccionado.');self.pages.setCurrentIndex(index)
+    def _set_message(self, text):
+        self.message.setText(text)
+        self.test_message.setText(text)
 
     def settings(self):
         return dict(profile=self.profile.text().strip(),reference=self.reference.text().strip(),
@@ -165,29 +186,30 @@ class BalancingPanel(QWidget):
         self._settings_changed()
         self.new_piece()
         if self.calibration and not self.compatible():
-            self.message.setText('La fuente o configuración de señal no coincide con la calibración. Restaura los valores o recalibra.')
+            self._set_message('La fuente o configuración de señal no coincide con la calibración. Restaura los valores o recalibra.')
 
     def _buttons(self):
         busy=self.pending is not None
         self.cancel_btn.setEnabled(busy)
+        self.test_cancel_btn.setEnabled(busy)
         self.initial_btn.setEnabled(not busy)
         self.trial_btn.setEnabled(not busy and self.initial is not None)
         self.save_btn.setEnabled(not busy and self.initial is not None and self.trial is not None)
         self.test_btn.setEnabled(not busy and self.compatible())
         self.residual_btn.setEnabled(not busy and self.compatible() and self.test is not None)
-        for w in self.settings_widgets+[self.mode,self.load_btn,self.new_btn,self.correction_radius,self.limit]:w.setEnabled(not busy)
+        for w in self.settings_widgets+[self.load_btn,self.test_load_btn,self.new_btn,self.correction_radius,self.limit,self.blade_one]:w.setEnabled(not busy)
 
     def begin_capture(self,kind):
         w=self.window
         if self.pending:return
         if not w.source or not w.source.isRunning() or time.monotonic()-w.last_block_time>1:
-            self.message.setText('Conecta una fuente con datos recientes antes de capturar.');return
+            self._set_message('Conecta una fuente con datos recientes antes de capturar.');return
         if kind=='trial' and self.initial is None:return
         if kind in ('test','residual') and not self.compatible():
-            self.message.setText('Calibración ausente o incompatible con la configuración actual.');return
+            self._set_message('Calibración ausente o incompatible con la configuración actual.');return
         settings=self.settings() if kind in ('initial','trial') else self.calibration.to_dict()
         if not settings['profile'] or not settings['reference']:
-            self.message.setText('Completa el perfil de montaje y la referencia de 0°.');return
+            self._set_message('Completa el perfil de montaje y la referencia de 0°.');return
         if kind=='initial':
             self.initial=self.trial=None;self.initial_label.setText('Inicial: —');self.trial_label.setText('Con masa de prueba: —')
         elif kind=='trial':self.trial=None;self.trial_label.setText('Con masa de prueba: —')
@@ -195,7 +217,7 @@ class BalancingPanel(QWidget):
         else:self.residual=None;self.residual_label.setText('Residual: —')
         self.pending=dict(kind=kind,readings=[],next_sample=w.total_samples+self.WINDOW_SAMPLES,
                           settings=settings,context=self.live_context(),epoch=w.stream_epoch,started=time.monotonic())
-        self.message.setText('Capturando 0/3 ventanas nuevas de 2 s…');self._buttons()
+        self._set_message('Capturando 0/3 ventanas nuevas de 2 s…');self._buttons()
 
     def consume(self,result,end_sample,epoch,context):
         p=self.pending
@@ -209,7 +231,7 @@ class BalancingPanel(QWidget):
         if abs(reading[2]-cfg['target_rpm'])/cfg['target_rpm']*100>cfg['tolerance_pct']:
             self.cancel_capture('RPM fuera de tolerancia. Estabiliza la velocidad y repite.');return
         p['readings'].append(reading);p['next_sample']=end_sample+self.WINDOW_SAMPLES
-        self.message.setText(f"Capturando {len(p['readings'])}/3 ventanas nuevas de 2 s…")
+        self._set_message(f"Capturando {len(p['readings'])}/3 ventanas nuevas de 2 s…")
         if len(p['readings'])<self.CAPTURE_WINDOWS:return
         try:
             measured=summarize(p['readings'],cfg['target_rpm'],cfg['tolerance_pct'],cfg['stability_pct'])
@@ -217,8 +239,8 @@ class BalancingPanel(QWidget):
             if p['kind']=='initial':self.initial_label.setText('Inicial: '+measured.describe())
             elif p['kind']=='trial':self.trial_label.setText('Con masa de prueba: '+measured.describe())
             else:self._show_test()
-            self.message.setText('Captura estable completada.')
-        except ValueError as exc:self.message.setText(str(exc))
+            self._set_message('Captura estable completada.')
+        except ValueError as exc:self._set_message(str(exc))
         self.pending=None;self._buttons()
 
     def check_freshness(self):
@@ -228,14 +250,15 @@ class BalancingPanel(QWidget):
     def cancel_capture(self,text):
         was_pending=self.pending is not None
         self.pending=None
-        if was_pending:self.message.setText(text)
+        if was_pending:self._set_message(text)
         if hasattr(self,'settings_widgets'):self._buttons()
 
     def new_piece(self):
         self.cancel_capture('Nueva pieza.');self.test=self.residual=None
-        self.result_label.setText('Corrección: —');self.residual_label.setText('Residual: —');self._buttons()
+        self.result_label.setText('Corrección: —');self.placement_label.setText('Colocación por álabes: —');self.residual_label.setText('Residual: —');self._buttons()
 
     def _show_test(self,*_):
+        self.blade_count_label.setText(str(self.window.blades_spin.value()))
         if self.test is None or not self.compatible():return
         try:
             c=self.calibration;radius=self.correction_radius.value()
@@ -243,14 +266,28 @@ class BalancingPanel(QWidget):
             self.result_label.setText(f"Agregar {result['mass_g']:.3f} g a {result['angle_deg']:.1f}° · {c.direction}\n"
                                       f"Desde: {c.reference} · radio {radius:g} mm\n"
                                       f"Desbalance estimado: {result['unbalance_gmm']:.2f} g·mm · "+self.test.describe())
+            self.placement_label.setText(self._placement_text(result, c.direction, radius))
             if self.residual:
                 r=correction(self.residual,c,radius);limit=self.limit.value()
                 verdict=('CUMPLE' if r['unbalance_gmm']<=limit else 'NO CUMPLE') if limit>0 else 'Sin criterio de aceptación'
                 reduction=100*(1-abs(self.residual.vector)/abs(self.test.vector))
                 self.residual_label.setText(f"Residual: {r['unbalance_gmm']:.2f} g·mm · {verdict}\n"
                     f"Reducción de amplitud 1X: {reduction:.1f}% · "+self.residual.describe()+
-                    f"\nCorrección adicional estimada: {r['mass_g']:.3f} g a {r['angle_deg']:.1f}° · {c.direction}")
-        except ValueError as exc:self.message.setText(str(exc))
+                    f"\nCorrección adicional estimada: {r['mass_g']:.3f} g a {r['angle_deg']:.1f}° · {c.direction}\n"
+                    + self._placement_text(r, c.direction, radius))
+        except ValueError as exc:self._set_message(str(exc))
+
+    def _placement_text(self, result, direction, radius):
+        blades = self.window.blades_spin.value()
+        try:
+            placements = distribute_on_blades(result['mass_g'], result['angle_deg'], blades, self.blade_one.value())
+        except ValueError as exc:
+            return 'Colocación por álabes: ' + str(exc)
+        lines = [f'Colocación · {blades} álabes · numeración en sentido {direction.lower()}:']
+        for number, mass, angle in placements:
+            lines.append(f'Álabe {number}: agregar {mass:.3f} g a {angle:.1f}°')
+        lines.append(f'Mismo plano y radio {radius:g} mm. Álabe 1 a {self.blade_one.value():g}° desde la marca de 0°.')
+        return '\n'.join(lines)
 
     def save_calibration(self):
         if not self.initial or not self.trial:return
@@ -261,8 +298,8 @@ class BalancingPanel(QWidget):
             if not path.lower().endswith('.json'):path+='.json'
             Path(path).write_text(json.dumps(c.to_dict(),ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
             self.activate(c,path)
-            self.message.setText('Calibración guardada. Retira la masa de prueba antes de medir una pieza.')
-        except (ValueError,OSError) as exc:self.message.setText(str(exc))
+            self._set_message('Calibración guardada. Retira la masa de prueba antes de medir una pieza.')
+        except (ValueError,OSError) as exc:self._set_message(str(exc))
 
     def load_calibration(self):
         path,_=QFileDialog.getOpenFileName(self,'Cargar calibración','','Calibración (*.json)')
@@ -270,9 +307,9 @@ class BalancingPanel(QWidget):
         try:
             c=Calibration.from_dict(json.loads(Path(path).read_text(encoding='utf-8')))
             self.activate(c,path)
-            self.message.setText('Calibración cargada. Confirma el montaje y la referencia física antes de medir.' if self.compatible() else
+            self._set_message('Calibración cargada. Confirma el montaje y la referencia física antes de medir.' if self.compatible() else
                                  'Archivo cargado, pero la fuente/ADC/trigger no coincide. Restaura la configuración o recalibra.')
-        except (ValueError,TypeError,OSError) as exc:self.message.setText(f'No se pudo cargar: {exc}')
+        except (ValueError,TypeError,OSError) as exc:self._set_message(f'No se pudo cargar: {exc}')
 
     def activate(self,c,path):
         self.calibration=c;self.saved_path=path;self._loading=True
@@ -286,4 +323,6 @@ class BalancingPanel(QWidget):
         label='SIMULADOR · ' if c.source_kind=='simulator' else ''
         self.summary.setText(f'{label}{c.profile} · {c.target_rpm:g} RPM · 0°: {c.reference} · {c.direction}\n'
                              f'α = {c.alpha_real:.6g} {c.alpha_imag:+.6g}j V/(g·mm) · {Path(path).name}')
-        self.new_piece();self.mode.setCurrentIndex(0);self._buttons()
+        self.test_summary.setText(self.summary.text())
+        self.new_piece();self._buttons()
+        self.window.plot_tabs.setCurrentIndex(1)

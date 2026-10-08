@@ -21,7 +21,7 @@ def stylesheet():
                color: {c['text']}; }}
     QMainWindow, QWidget#workspace {{ background: {c['background']}; }}
     QLabel {{ background: transparent; }}
-    QWidget#balancingPanel, QWidget#balancePage {{ background: {c["surface"]}; }}
+    QWidget#balancingPanel, QWidget#balancePage, QWidget#polarPanel {{ background: {c["surface"]}; }}
     QLabel#title {{ font-size: 25px; font-weight: 700; color: {c['primary']}; }}
     QLabel#subtitle, QLabel#metricTitle {{ color: {c['muted']}; }}
     QLabel#metricValue {{ font-size: 27px; font-weight: 700; color: {c['primary']}; }}

@@ -26,7 +26,6 @@ def main():
         w.show()
         w.plot_tabs.setCurrentIndex(2)
         p = w.balancing
-        p.mode.setCurrentIndex(1)
         p.profile.setText('DEMOSTRACIÓN / Rotor A')
         p.reference.setText('Marca del cubo')
         w.start_source()
@@ -67,8 +66,18 @@ def main():
             with patch.object(QFileDialog, 'getOpenFileName', return_value=(path, '')):
                 p.load_calibration()
             assert p.compatible()
+            assert w.plot_tabs.currentIndex() == 1
+            assert p.test_widget.parent() is not p
+            assert not w.render_timer.isActive()
             capture('test', base)
             assert '2.500 g' in p.result_label.text() and '260.0°' in p.result_label.text()
+            assert 'Álabe 6:' in p.placement_label.text() and 'Álabe 7:' in p.placement_label.text()
+            w.blades_spin.setValue(12)
+            assert '12 álabes' in p.placement_label.text() and 'Álabe 9:' in p.placement_label.text()
+            p.blade_one.setValue(20)
+            assert 'Álabe 9: agregar 2.500 g' in p.placement_label.text()
+            w.blades_spin.setValue(7)
+            p.blade_one.setValue(0)
             p.limit.setValue(20)
             capture('residual', alpha*phasor(10, 80))
             assert 'CUMPLE' in p.residual_label.text()

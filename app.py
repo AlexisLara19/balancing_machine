@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
     QLabel, QMainWindow, QPushButton, QSpinBox, QWidget,
-    QFrame, QHBoxLayout, QVBoxLayout, QScrollArea, QTabWidget
+    QFrame, QHBoxLayout, QVBoxLayout, QScrollArea, QTabWidget, QSplitter
 )
 
 from protocol import SAMPLES_PER_PACKET, ADC_BITS, ADC_MAX, SampleBlock
@@ -240,8 +240,18 @@ class MainWindow(QMainWindow):
         self.plot_tabs = QTabWidget()
         self.plot_tabs.addTab(self.scope, 'Señal temporal')
         self.polar = PolarPlot()
-        self.plot_tabs.addTab(self.polar, 'Polar 1X')
         self.balancing = BalancingPanel(self)
+        self.polar_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.polar_splitter.addWidget(self.polar)
+        test_scroll = QScrollArea()
+        test_scroll.setWidgetResizable(True)
+        test_scroll.setWidget(self.balancing.test_widget)
+        self.polar_splitter.addWidget(test_scroll)
+        self.polar_splitter.setChildrenCollapsible(False)
+        self.polar_splitter.setStretchFactor(0, 1)
+        self.polar_splitter.setStretchFactor(1, 1)
+        self.polar_splitter.setSizes([500, 470])
+        self.plot_tabs.addTab(self.polar_splitter, 'Polar 1X')
         balance_scroll = QScrollArea()
         balance_scroll.setWidgetResizable(True)
         balance_scroll.setWidget(self.balancing)
@@ -354,7 +364,7 @@ class MainWindow(QMainWindow):
         return data.astype(np.float32) * (self.vref / ADC_MAX)
 
     def on_plot_tab_changed(self, index):
-        self.analysis_box.setVisible(index != 2)
+        self.analysis_box.setVisible(index == 0)
         if index == 0:
             self.render_timer.start(33)
             self.refresh_plot()
@@ -453,7 +463,12 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "balancing"):
-            self.balancing.set_compact(self.width() < 1300)
+            compact = self.width() < 1300
+            self.balancing.set_compact(compact)
+            orientation = Qt.Orientation.Vertical if compact else Qt.Orientation.Horizontal
+            if self.polar_splitter.orientation() != orientation:
+                self.polar_splitter.setOrientation(orientation)
+                self.polar_splitter.setSizes([300, 350] if compact else [500, 470])
 
     def closeEvent(self, event):
         self.stop_source()

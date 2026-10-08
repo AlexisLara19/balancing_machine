@@ -1,7 +1,7 @@
 """Numerical checks for one-plane calibration, angle conventions and rejection gates."""
 import math
 import unittest
-from calibration_core import Measurement, Calibration, phasor, summarize, calibrate, correction
+from calibration_core import Measurement, Calibration, phasor, summarize, calibrate, correction, distribute_on_blades
 
 
 class CalibrationTests(unittest.TestCase):
@@ -39,6 +39,27 @@ class CalibrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):Calibration.from_dict(data)
         with self.assertRaises(ValueError):correction(m,c,0)
         with self.assertRaises(ValueError):correction(Measurement(1+0j,2100,0,3),c,100)
+
+
+class BladeTests(unittest.TestCase):
+    def test_vector_reconstruction(self):
+        for blades in (3, 7, 12, 30):
+            for offset in (0, 19, 350):
+                for angle in (0, 1, 45, 260, 359.99):
+                    parts = distribute_on_blades(2.5, angle, blades, offset)
+                    for sign in (-1, 1):
+                        actual = sum(phasor(mass, sign * at) for _, mass, at in parts)
+                        self.assertAlmostEqual(abs(actual - phasor(2.5, sign * angle)), 0, places=9)
+                    self.assertTrue(all(mass >= 0 for _, mass, _ in parts))
+                    self.assertTrue(all(1 <= number <= blades for number, _, _ in parts))
+
+    def test_exact_blade_and_wrap(self):
+        self.assertEqual(distribute_on_blades(2.5, 0, 7), [(1, 2.5, 0)])
+        self.assertEqual([p[0] for p in distribute_on_blades(2.5, 350, 7)], [7, 1])
+        self.assertEqual(distribute_on_blades(0, 0, 7), [])
+        self.assertEqual(distribute_on_blades(1, 180, 2), [(2, 1, 180)])
+        with self.assertRaises(ValueError): distribute_on_blades(1, 90, 2)
+        with self.assertRaises(ValueError): distribute_on_blades(1, 30, 0)
 
 
 if __name__=='__main__':unittest.main()

@@ -171,16 +171,18 @@ No se ha medido CPU/memoria ni validado con hardware o Windows.
 
 ## Calibración y prueba de balanceo en un plano
 
-La pestaña **Balanceo · 1 plano** ofrece los modos **Calibración** y **Prueba de
-balanceo**. Los controles de adquisición siguen disponibles. Al entrar a esta
-pestaña se detiene el dibujo del osciloscopio; la adquisición y el análisis siguen
-activos. Los resultados de trabajo se capturan mediante botones; no se modifica
+La pestaña **Balanceo · 1 plano** contiene el flujo de **Calibración**.
+La **Prueba de balanceo** está en **Polar 1X**, junto a la gráfica: cargar
+calibración, definir radio y límite, medir y verificar. El separador permite
+ajustar el espacio de cada panel; en ventanas estrechas se apilan verticalmente.
+Los controles de adquisición siguen disponibles. Fuera de la vista temporal se
+detiene el dibujo del osciloscopio; la adquisición y el análisis siguen activos. Los resultados de trabajo se capturan mediante botones; no se modifica
 continuamente una recomendación que ya fue capturada.
 
 ### Calibración
 
 1. Conectar la fuente y configurar ADC full-scale y umbral del trigger.
-2. Seleccionar Calibración, definir perfil/montaje, marca física de 0°, sentido de
+2. Abrir Balanceo · 1 plano y definir perfil/montaje, marca física de 0°, sentido de
    los ángulos, respuesta angular y RPM nominales.
 3. Capturar el rotor **sin masa de prueba**.
 4. Detener el rotor, colocar una masa conocida a un radio y ángulo conocidos,
@@ -206,6 +208,10 @@ deben ajustarse después de caracterizar la repetibilidad del equipo real.
 
 ### Prueba de balanceo
 
+Abrir **Polar 1X**. Al cargar o guardar una calibración se abre automáticamente
+esta pestaña. La gráfica continúa mostrando la vibración 1X medida en volts;
+la recomendación de masa y ángulo físico aparece en el panel de prueba.
+
 1. Cargar una calibración compatible y confirmar físicamente el perfil, montaje,
    referencia angular y velocidad indicados. El programa no detecta la identidad
    del rotor, cambios mecánicos ni cambios de ganancia externos.
@@ -213,8 +219,7 @@ deben ajustarse después de caracterizar la repetibilidad del equipo real.
    permitido de desbalance residual en g·mm. Un límite de cero significa que no
    se ha definido un criterio de aceptación.
 3. Pulsar **Medir rotor y calcular corrección**. Se indica masa a **agregar**, ángulo,
-   sentido y radio. Las posiciones de colocación son continuas; esta versión no
-   reparte masas entre álabes u orificios.
+   sentido y radio, junto con el reparto equivalente entre álabes vecinos.
 4. Detener el rotor, colocar la masa y volver a girar. Pulsar **Verificar** para
    medir el desbalance residual estimado, reducción de amplitud y corrección
    adicional estimada. Mantener las correcciones ya instaladas.
@@ -256,3 +261,34 @@ python test_workflow.py
 
 Las capturas `previews/calibration-*.png` y `previews/balancing-*.png` ilustran el
 flujo con datos sintéticos de demostración. No son una calibración física válida.
+
+## Colocación de masas por álabes
+
+En **Polar 1X**, la prueba utiliza el **N.º álabes** de Configuración de señal.
+Define **Ángulo del álabe 1** respecto a la misma marca física de 0° usada al
+calibrar. Los álabes se numeran del 1 al N en el sentido angular guardado en la
+calibración, observando siempre desde el mismo lado. Este ángulo de numeración
+no modifica la referencia del trigger ni el coeficiente.
+
+Se supone que los álabes son equidistantes y que todas las masas se colocan en
+el mismo plano y radio indicado. La pantalla muestra el vector de corrección
+continuo y la masa a agregar en cada uno de los dos álabes vecinos. Cuando la
+posición coincide con un álabe, se indica una sola masa. El reparto también se
+aplica a la corrección adicional estimada después de verificar el residual.
+La gráfica polar sigue representando vibración 1X en volts, no masas en gramos.
+
+Para separación angular D=360/N y una corrección situada a d del primer álabe:
+
+`m1 = m * sin(D-d) / sin(D)`
+
+`m2 = m * sin(d) / sin(D)`
+
+Las masas se suman vectorialmente; su suma aritmética puede superar la masa
+continua equivalente. Cambiar el número de álabes, el ángulo del álabe 1 o el radio
+recalcula la indicación a partir de la misma medición capturada.
+
+Con uno o dos álabes solo puede colocarse exactamente una corrección alineada
+con uno de ellos; otros ángulos requieren una posición libre de corrección.
+Para álabes no equidistantes o radios diferentes se necesita otro modelo de
+posiciones. Las pruebas verifican reconstrucción vectorial, cruce 360°/0°,
+coincidencia exacta, numeración y actualización del resultado en la interfaz.
